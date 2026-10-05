@@ -1,4 +1,4 @@
-local UserInputService, CurrentCamera, n1, n2, u13, n3, u15, u16, u17, v18, v25, u29, u31, u32, u61, u62, t3, t4, v68, v78, u120, n17, u126, u127, u128, v145, u147, u148, u149, u150, u151, u156, u172, u173, u174, u175, u176, u177, u178, v183, u184, u185, u186, u187, u188, u189, u198, u199, id, u201, u202, u205, u206, u207, u208, u209, u210, u211, u212, v232, v239, v244, u252, u257, u263, u270, u276, u281, u287, u293, v301, v302, farmSet, farmKillAll, farmBigHeadSet, farmKillMurderSet
+local UserInputService, CurrentCamera, n1, n2, u13, n3, u15, u16, u17, v18, v25, u29, u31, u32, u61, u62, t3, t4, v68, v78, u120, n17, u126, u127, u128, v145, u147, u148, u149, u150, u151, u156, u172, u173, u174, u175, u176, u177, u178, v183, u184, u185, u186, u187, u188, u189, u198, u199, id, u201, u202, u205, u206, u207, u208, u209, u210, u211, u212, v232, v239, v244, u252, u257, u263, u270, u276, u281, u287, u293, v301, v302, farmSet, farmKillAll, farmKillMurderSet
 
 do
     local u9, u10, u99, u105, u110, u116, u157
@@ -64,59 +64,6 @@ do
                     local farmINFINITE_INTERVAL = 0.05
                     local farmWallbangOn = false
                     local farmStatus = nil
-
-                    -- ========== BIG HITBOX LOGIC ==========
-                    local bigHitboxOn = false
-                    local bigHitboxSize = 15
-                    local bigHitboxConn = nil
-                    local originalHitboxSizes = {}
-
-                    local function setBigHitbox(on)
-                        bigHitboxOn = on == true
-                        if bigHitboxOn then
-                            if not bigHitboxConn then
-                                bigHitboxConn = RunService.Heartbeat:Connect(function()
-                                    if not bigHitboxOn then return end
-                                    for _, plr in ipairs(Players:GetPlayers()) do
-                                        if plr ~= LocalPlayer and plr.Character then
-                                            local hrp = plr.Character:FindFirstChild('HumanoidRootPart')
-                                            if hrp then
-                                                pcall(function()
-                                                    if not originalHitboxSizes[plr] then
-                                                        originalHitboxSizes[plr] = hrp.Size
-                                                    end
-                                                    hrp.Size = Vector3.new(bigHitboxSize, bigHitboxSize, bigHitboxSize)
-                                                    hrp.Transparency = 0.7
-                                                    hrp.CanCollide = false
-                                                end)
-                                            end
-                                        end
-                                    end
-                                end)
-                            end
-                        else
-                            if bigHitboxConn then bigHitboxConn:Disconnect() bigHitboxConn = nil end
-                            for _, plr in ipairs(Players:GetPlayers()) do
-                                if plr ~= LocalPlayer and plr.Character then
-                                    local hrp = plr.Character:FindFirstChild('HumanoidRootPart')
-                                    if hrp then
-                                        local orig = originalHitboxSizes[plr] or Vector3.new(2, 2, 1)
-                                        pcall(function()
-                                            hrp.Size = orig
-                                            hrp.Transparency = 1
-                                            hrp.CanCollide = true
-                                        end)
-                                    end
-                                end
-                            end
-                            originalHitboxSizes = {}
-                        end
-                    end
-
-                    local function setBigHitboxSize(size)
-                        bigHitboxSize = math.clamp(tonumber(size) or 15, 15, 100)
-                    end
-                    -- ========== END BIG HITBOX ==========
 
                     local function f_getRoot() local c = LocalPlayer.Character return c and c:FindFirstChild('HumanoidRootPart') end
                     local function f_getHead() local c = LocalPlayer.Character return c and c:FindFirstChild('Head') end
@@ -391,12 +338,10 @@ do
                         f_snapGun(obj)
                     end)
 
-                    -- ★ АВТОПОДБОР ОРУЖИЯ ВО ВРЕМЯ ФАРМА (если шериф умер)
                     local function f_tryPickupGun()
                         local root = f_getRoot()
                         if not root then return false end
                         if f_playerHasTool(LocalPlayer, 'Gun') then return false end
-
                         for _, obj in ipairs(Workspace:GetDescendants()) do
                             if f_isGunPart(obj) then
                                 pcall(function()
@@ -609,10 +554,7 @@ do
                                         local cnt = f_getCoinCount()
                                         if farmStatus then farmStatus:SetDesc('coins: ' .. cnt .. '/40 · ' .. f_myRole()) end
                                         if cnt >= farmMAX_COINS then f_onBagFull() break end
-
-                                        -- ★ ПОДБОР ОРУЖИЯ ВО ВРЕМЯ ФАРМА
                                         f_tryPickupGun()
-
                                         local r = f_getRoot()
                                         if not r then
                                             task.wait(0.25)
@@ -688,8 +630,56 @@ do
                         end)
                     end
 
+                    -- ============================================================
+                    -- AUTO SHOOT (ИСПРАВЛЕНО)
+                    -- Стреляет ТОЛЬКО когда мардер виден (не за стеной).
+                    -- Не стреляет через стены / препятствия.
+                    -- ============================================================
+                    local autoShootConn = nil
+                    local farmLastShootLocal = 0
+                    local function f_setAutoShoot(on)
+                        if autoShootConn then
+                            autoShootConn:Disconnect()
+                            autoShootConn = nil
+                        end
+                        if not on then return end
+                        autoShootConn = RunService.Heartbeat:Connect(function()
+                            local char = LocalPlayer.Character
+                            local root = char and char:FindFirstChild('HumanoidRootPart')
+                            if not root then return end
+
+                            -- Целимся именно в мардера (игрок с ножом)
+                            local m = f_findMurderer()
+                            if not m or not m.Character then return end
+
+                            local mHum = m.Character:FindFirstChildOfClass('Humanoid')
+                            if not mHum or mHum.Health <= 0 then return end
+
+                            -- ❗ ГЛАВНАЯ ПРОВЕРКА: не стреляем если мардер за стеной / не виден
+                            if not f_canSee(m.Character) then return end
+
+                            -- Задержка между выстрелами (анти-спам)
+                            if tick() - farmLastShootLocal < 0.35 then return end
+
+                            local gun = f_equipGun()
+                            if not gun then return end
+
+                            local thrp = m.Character:FindFirstChild('HumanoidRootPart')
+                            if not thrp then return end
+
+                            local ev = gun:FindFirstChild('Shoot') or gun:FindFirstChild('ShootEvent')
+                            if not ev then return end
+
+                            pcall(function()
+                                ev:FireServer(thrp.CFrame * CFrame.new(0, 0, 2), thrp.CFrame)
+                            end)
+                            farmLastShootLocal = tick()
+                            f_unequipGun()
+                        end)
+                    end
+                    getgenv().CatFeexAutoShoot = f_setAutoShoot
+
                     farmSet = f_setFarm
-                    farmBigHeadSet = setBigHitbox
                     farmKillMurderSet = f_setKillMurder
 
                     do
@@ -1969,9 +1959,10 @@ do
                 GoldBomb = UDim2.new(0.5, -210, 0.78, 0),
                 NormalBomb = UDim2.new(0.5, -110, 0.78, 0),
                 Shoot = UDim2.new(0.5, -10, 0.78, 0),
-                AIM = UDim2.new(0.5, 82, 0.78, 16),
-                ESP = UDim2.new(0.5, 145, 0.78, 16),
-                Flick = UDim2.new(0.5, 210, 0.78, 16),
+                AutoShoot = UDim2.new(0.5, 82, 0.78, 16),
+                AIM = UDim2.new(0.5, 175, 0.78, 16),
+                ESP = UDim2.new(0.5, 248, 0.78, 16),
+                Flick = UDim2.new(0.5, 320, 0.78, 16),
                 Speed = UDim2.new(0.5, -278, 0.78, 16),
                 Stretch = UDim2.new(0.5, -214, 0.78, 16),
                 GrabGun = UDim2.new(0.5, 90, 0.68, 16),
@@ -2027,6 +2018,32 @@ do
                 return
             end
             if u240.Shoot then u240.Shoot.btn:Destroy() u240.Shoot = nil end
+        end
+
+        local u240c = t25
+        local u241c = v220
+        local u242c = t26
+        local u243c = uDim2
+        local u251c = v18
+        function v244autoshoot(p47c)
+            if p47c then
+                local v770 = u241c('AutoShoot', u242c.AutoShoot, u243c, Color3.fromRGB(255, 60, 60), 'AUTO\nSHOOT')
+                u240c.AutoShoot.btn.MouseButton1Click:Connect(function()
+                    local newState = not getgenv().CatFeexAutoShootOn
+                    getgenv().CatFeexAutoShootOn = newState
+                    if getgenv().CatFeexAutoShoot then
+                        getgenv().CatFeexAutoShoot(newState)
+                    end
+                    u251c:Notify({
+                        Title = 'CatFeex 0.1',
+                        Content = newState and 'Auto Shoot ON' or 'Auto Shoot OFF',
+                        Duration = 3,
+                        Icon = 'bell',
+                    })
+                end)
+                return
+            end
+            if u240c.AutoShoot then u240c.AutoShoot.btn:Destroy() u240c.AutoShoot = nil end
         end
 
         local u240b = t25
@@ -2258,6 +2275,13 @@ do
             u295.Shoot.img.Image = v779 and 'rbxassetid://9695655416' or 'rbxassetid://5159914132'
             u295.Shoot.lbl.Text = v779 and 'THROW' or 'SHOOT'
         end
+        if u295.AutoShoot then
+            local autoOn = getgenv().CatFeexAutoShootOn == true
+            local v779b = autoOn and Color3.fromRGB(50, 255, 100) or Color3.fromRGB(255, 60, 60)
+            u295.AutoShoot.lbl.Text = autoOn and 'AUTO\nON' or 'AUTO\nOFF'
+            u295.AutoShoot.lbl.TextColor3 = v779b
+            u295.AutoShoot.stroke.Color = v779b
+        end
         if u295.AIM then
             local aimOn = getgenv().CatFeexAimActive == true
             local murdererFound = false
@@ -2359,7 +2383,7 @@ do
 
     v301:Paragraph({
         Title = 'Auto-Loaded Buttons',
-        Content = 'AIM, Gold Bomb, Normal Bomb and Shoot/Throw are enabled by default.',
+        Content = 'AIM, Auto Shoot, Gold Bomb, Normal Bomb and Shoot/Throw are enabled by default.',
     })
 
     local t27 = {Title = 'Show Gold Bomb', Default = true}
@@ -2376,6 +2400,11 @@ do
     local u308 = v244
     function t29.Callback(p58) u308(p58) end
     v301:Toggle(t29)
+
+    local t29a = {Title = 'Show Auto Shoot', Default = true}
+    local u308a = v244autoshoot
+    function t29a.Callback(p58a) u308a(p58a) end
+    v301:Toggle(t29a)
 
     local t29b = {Title = 'Show AIM', Default = true}
     local u308b = v244aim
@@ -2532,13 +2561,6 @@ end
 v301:Button(t36)
 
 v301:Divider()
-local t37 = {Title = 'Anti-Fling', Description = 'Limits velocity to prevent being launched', Default = false}
-local u330 = v18
-function t37.Callback(p74)
-    u156(p74)
-    u330:Notify({Title = 'CatFeex 0.1', Content = p74 and 'Anti-Fling ON' or 'Anti-Fling OFF', Duration = 3, Icon = 'bell'})
-end
-v301:Toggle(t37)
 
 local t38 = {Title = 'Auto Ping Prediction', Description = 'Adds ping offset to shoot and throw', Default = false}
 local u332 = v18
@@ -2560,7 +2582,7 @@ end
 v301:Button(t39)
 
 v301:Dropdown({
-    Title = 'Velocity Cap (Anti-Fling)',
+    Title = 'Velocity Cap',
     Options = {'50', '100', '150', '200', '300', '500'},
     Default = '200',
     Callback = function(p77) n1 = tonumber(p77) or 200 end,
@@ -2568,7 +2590,7 @@ v301:Dropdown({
 
 v302:Paragraph({
     Title = 'Auto Farm',
-    Content = 'Автофарм 40 монет + автоматика:\nInnocent/Sheriff — наверх → grab gun → Kill Murder\nMurderer — kill all\n★ Во время фарма автоматически подбирает Gun (если шериф умер и он дропнулся)',
+    Content = 'Автофарм 40 монет + автоматика:\nInnocent/Sheriff — наверх → grab gun → Kill Murder\nMurderer — kill all\n★ Автоподбор Gun при фарме',
 })
 
 v302:Toggle({
@@ -2597,43 +2619,8 @@ v302:Button({
 
 v302:Divider()
 v302:Paragraph({
-    Title = 'Big Hitbox',
-    Content = 'Увеличивает хитбокс игроков (15–100 studs).\nТвой хитбокс НЕ меняется.',
-})
-
-v302:Toggle({
-    Title = 'Big Hitbox',
-    Description = 'Увеличивает хитбокс других игроков',
-    Default = false,
-    Callback = function(on)
-        farmBigHeadSet(on)
-        v18:Notify({
-            Title = 'CatFeex 0.1',
-            Content = on and 'Big Hitbox ON' or 'Big Hitbox OFF',
-            Duration = 3,
-            Icon = 'bell',
-        })
-    end,
-})
-
-v302:Button({
-    Title = 'Hitbox Size Slider',
-    Description = 'Размер хитбокса (15–100 studs)',
-    Callback = function()
-        u126('Hitbox Size', 15, 100, bigHitboxSize, 5, function(v)
-            setBigHitboxSize(v)
-            v18:Notify({Title = 'CatFeex 0.1', Content = 'Hitbox size: ' .. v, Duration = 3, Icon = 'bell'})
-        end, function()
-            setBigHitboxSize(15)
-            v18:Notify({Title = 'CatFeex 0.1', Content = 'Hitbox reset to 15', Duration = 3, Icon = 'bell'})
-        end)
-    end,
-})
-
-v302:Divider()
-v302:Paragraph({
     Title = 'Infos',
-    Content = 'Speed: 25 studs\nAnti-stuck: TP на 5 studs\nInfinite shoot: 0.05s\nMax coins: 40\nAuto-pickup Gun: ON (при фарме)',
+    Content = 'Speed: 25 studs\nAnti-stuck: TP на 5 studs\nInfinite shoot: 0.05s\nMax coins: 40\nAuto-pickup Gun: ON',
 })
 
 local t40 = {Title = 'Enable ESP', Default = false}
@@ -2714,6 +2701,7 @@ task.wait(0.4)
 v232(true)
 v239(true)
 v244(true)
+v244autoshoot(true)
 v244aim(true)
 v18:Notify({
     Title = 'CatFeex 0.1',
@@ -2721,4 +2709,4 @@ v18:Notify({
     Duration = 3,
     Icon = 'bell',
 })
-print('[CatFeex 0.1] loaded with auto-pickup gun during farm.')
+print('[CatFeex 0.1] loaded with Auto Shoot button.')
